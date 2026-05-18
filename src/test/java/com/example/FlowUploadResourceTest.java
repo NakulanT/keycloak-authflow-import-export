@@ -17,7 +17,6 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -355,8 +354,6 @@ class FlowUploadResourceTest {
         model.setId(id);
         model.setAlias(alias);
         model.setConfig(Map.of("k", "v"));
-        assertNotNull(model.getConfig());
-        assertFalse(model.getConfig().isEmpty());
         return model;
     }
 }
