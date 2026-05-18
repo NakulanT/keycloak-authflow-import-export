@@ -120,8 +120,10 @@ class FlowUploadResourceTest {
         AuthenticatorConfigModel config = config("cfg-id", "cfg-alias");
 
         when(realm.getFlowByAlias("top-flow")).thenReturn(top);
-        when(realm.getAuthenticationExecutionsStream("id-top")).thenReturn(Stream.of(configExec, subFlowExec));
-        when(realm.getAuthenticationExecutionsStream("id-sub")).thenReturn(Stream.empty());
+        when(realm.getAuthenticationExecutionsStream("id-top"))
+                .thenAnswer(invocation -> Stream.of(configExec, subFlowExec));
+        when(realm.getAuthenticationExecutionsStream("id-sub"))
+                .thenAnswer(invocation -> Stream.empty());
         when(realm.getAuthenticationFlowById("id-sub")).thenReturn(sub);
         when(realm.getAuthenticatorConfigById("cfg-id")).thenReturn(config);
 
@@ -146,6 +148,28 @@ class FlowUploadResourceTest {
         JsonNode body = OBJECT_MAPPER.readTree(String.valueOf(response.getEntity()));
         assertTrue(body.isArray());
         assertEquals(0, body.size());
+    }
+
+    @Test
+    void exportAllFlowsReturnsServerErrorWhenFlowListingFails() {
+        when(realm.getAuthenticationFlowsStream()).thenThrow(new RuntimeException("cannot list flows"));
+
+        Response response = resource.exportAllFlows();
+
+        assertEquals(500, response.getStatus());
+        assertTrue(String.valueOf(response.getEntity()).contains("cannot list flows"));
+    }
+
+    @Test
+    void exportFlowReturnsServerErrorWhenExecutionLookupFails() {
+        AuthenticationFlowModel top = flow("top-flow", "id-top", true, false, "basic-flow", "Top");
+        when(realm.getFlowByAlias("top-flow")).thenReturn(top);
+        when(realm.getAuthenticationExecutionsStream("id-top")).thenThrow(new RuntimeException("execution lookup failed"));
+
+        Response response = resource.exportFlow("top-flow");
+
+        assertEquals(500, response.getStatus());
+        assertTrue(String.valueOf(response.getEntity()).contains("execution lookup failed"));
     }
 
     @Test
@@ -225,6 +249,71 @@ class FlowUploadResourceTest {
         assertTrue(String.valueOf(response.getEntity()).contains("root-flow"));
         verify(realm, atLeast(2)).addAuthenticatorExecution(any(AuthenticationExecutionModel.class));
         verify(realm, never()).addAuthenticatorConfig(any(AuthenticatorConfigModel.class));
+    }
+
+    @Test
+    void uploadFlowImportsArrayRootFormat() {
+        Map<String, AuthenticationFlowModel> flowStore = new HashMap<>();
+        when(realm.getFlowByAlias(anyString())).thenAnswer(invocation -> flowStore.get(invocation.getArgument(0)));
+        when(realm.addAuthenticationFlow(any(AuthenticationFlowModel.class))).thenAnswer(invocation -> {
+            AuthenticationFlowModel added = invocation.getArgument(0);
+            added.setId("id-" + added.getAlias());
+            flowStore.put(added.getAlias(), added);
+            return added;
+        });
+
+        String payload = """
+                [
+                  {"alias":"array-flow-1","authenticationExecutions":[{"authenticator":"auth-cookie","authenticatorFlow":false,"requirement":"ALTERNATIVE","priority":10}]},
+                  {"alias":"array-flow-2","authenticationExecutions":[{"authenticator":"auth-otp-form","authenticatorFlow":false,"requirement":"REQUIRED","priority":20}]}
+                ]
+                """;
+
+        Response response = resource.uploadFlow(payload);
+
+        assertEquals(200, response.getStatus());
+        assertTrue(String.valueOf(response.getEntity()).contains("array-flow-1"));
+        assertTrue(String.valueOf(response.getEntity()).contains("array-flow-2"));
+    }
+
+    @Test
+    void uploadFlowCreatesAuthenticatorConfigWhenMissing() {
+        Map<String, AuthenticationFlowModel> flowStore = new HashMap<>();
+        when(realm.getFlowByAlias(anyString())).thenAnswer(invocation -> flowStore.get(invocation.getArgument(0)));
+        when(realm.addAuthenticationFlow(any(AuthenticationFlowModel.class))).thenAnswer(invocation -> {
+            AuthenticationFlowModel added = invocation.getArgument(0);
+            added.setId("id-" + added.getAlias());
+            flowStore.put(added.getAlias(), added);
+            return added;
+        });
+        when(realm.getAuthenticatorConfigsStream()).thenAnswer(invocation -> Stream.empty());
+        when(realm.addAuthenticatorConfig(any(AuthenticatorConfigModel.class))).thenAnswer(invocation -> {
+            AuthenticatorConfigModel added = invocation.getArgument(0);
+            added.setId("cfg-created-id");
+            return added;
+        });
+
+        String payload = """
+                {
+                  "authenticatorConfigs": [
+                    { "alias": "cfg-created", "config": { "k":"v" } }
+                  ],
+                  "authenticationFlows": [
+                    {
+                      "alias": "flow-with-created-config",
+                      "topLevel": true,
+                      "providerId": "basic-flow",
+                      "authenticationExecutions": []
+                    }
+                  ]
+                }
+                """;
+
+        Response response = resource.uploadFlow(payload);
+
+        assertEquals(200, response.getStatus());
+        verify(realm).addAuthenticatorConfig(any(AuthenticatorConfigModel.class));
+        assertTrue(String.valueOf(response.getEntity()).contains("flow-with-created-config"));
     }
 
     @Test
